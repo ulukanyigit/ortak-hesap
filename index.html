@@ -608,13 +608,31 @@ function startApp(){
 setInterval(()=>{if(document.visibilityState==='visible'&&state.mode==='app'&&!pending)refresh()},30000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.mode==='app')refresh()});
 
+// Yapıştırılan metnin içinden adresi çıkarır (fazladan boşluk, satır ya da yazı olsa da).
+function cleanUrl(raw){
+  const s=String(raw||'').replace(/[\s​-‍﻿]+/g,' ');
+  const g=s.replace(/ /g,'').match(/https:\/\/script\.google\.com\/(?:a\/)?macros\/(?:[^\/]+\/)?s\/[A-Za-z0-9_-]+\/(?:exec|dev)/);
+  if(g) return g[0];
+  const any=s.match(/https?:\/\/[^\s"'<>]+/);
+  return any?any[0]:'';
+}
+// "const ANAHTAR = 'xxxx';" satırının tamamı yapıştırılsa da tırnak içini alır.
+function cleanKey(raw){
+  let k=String(raw||'').trim();
+  const q=k.match(/'([^']+)'|"([^"]+)"|‘([^’]+)’/);
+  if(q) k=q[1]||q[2]||q[3];
+  return k.replace(/[\s​-‍﻿]+/g,'');
+}
 document.addEventListener('submit',async ev=>{
   if(ev.target.id!=='connForm')return;
   ev.preventDefault();
-  const u=$('cUrl').value.trim(),k=$('cKey').value.trim(),err=$('connErr'),btn=$('connBtn');
+  const u=cleanUrl($('cUrl').value),k=cleanKey($('cKey').value),err=$('connErr'),btn=$('connBtn');
   err.textContent='';
-  if(!/^https?:\/\/\S+$/.test(u)){err.textContent='Google Script adresini yapıştır. https://script.google.com/… ile başlar.';$('cUrl').focus();return}
-  if(!k){err.textContent='Anahtarı yaz.';$('cKey').focus();return}
+  if(!u){err.textContent='Google Script adresini yapıştır. https://script.google.com/macros/s/… ile başlar, /exec ile biter.';$('cUrl').focus();return}
+  if(/\/dev$/.test(u)){err.textContent='Bu, yalnızca test için olan /dev adresi. Dağıt → Yeni dağıtım’dan çıkan ve /exec ile biten adresi yapıştır.';$('cUrl').focus();return}
+  $('cUrl').value=u;
+  if(!k){err.textContent='Anahtarı yaz. Kod.gs dosyasının 10. satırında, ANAHTAR = ’…’ tırnaklarının içindeki yazı.';$('cKey').focus();return}
+  $('cKey').value=k;
   btn.disabled=true;btn.textContent='Bağlanıyor…';
   try{
     const c={u,k},j=await api(null,c);
