@@ -54,7 +54,11 @@
 [hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
-body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg);pointer-events:none}
+dialog:not([open]){display:none}
+/* <dialog> desteklemeyen ya da showModal'ı reddeden tarayıcılar için yedek görünüm */
+dialog.fb{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:100;margin:0 auto}
+html.fb-open body::after{content:"";position:fixed;inset:0;z-index:90;background:rgba(15,23,42,.55)}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;-webkit-tap-highlight-color:transparent}
 :focus-visible{outline:3px solid var(--primary);outline-offset:2px}
@@ -335,6 +339,18 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em;
 </dialog>
 
 <script>
+/* Telefonda bir şey ters giderse hatayı ekranda göster (asıl betik hiç çalışamasa bile). */
+(function(){
+  function show(msg){
+    var box=document.getElementById('toasts');if(!box)return;
+    var el=document.createElement('div');el.className='toast err';el.textContent='Bir hata oldu: '+msg+'. Ekran görüntüsünü gönderirsen düzeltilir.';
+    box.appendChild(el);setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el)},9000);
+  }
+  window.addEventListener('error',function(e){show(e.message||'bilinmeyen hata')});
+  window.addEventListener('unhandledrejection',function(e){var r=e.reason;show((r&&r.message)||String(r))});
+})();
+</script>
+<script>
 (() => {
 'use strict';
 const MONTHS=['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
@@ -342,6 +358,19 @@ const INST_OPTS=[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36];
 const CONN_KEY='oh-baglanti',CACHE_KEY='oh-onbellek';
 const QR_SRC='https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
 const $=id=>document.getElementById(id);
+/* Pencereler: showModal varsa onu, yoksa ya da hata verirse yedek görünümü kullan. */
+const HAS_DLG=typeof HTMLDialogElement==='function'&&typeof HTMLDialogElement.prototype.showModal==='function';
+const isOpen=d=>d.hasAttribute('open');
+function showDlg(d){
+  if(isOpen(d)) return;
+  if(HAS_DLG){try{d.showModal();return}catch(e){}}
+  d.setAttribute('open','');d.classList.add('fb');document.documentElement.classList.add('fb-open');
+}
+function hideDlg(d){
+  if(HAS_DLG&&isOpen(d)&&!d.classList.contains('fb')){try{d.close()}catch(e){}}
+  d.removeAttribute('open');d.classList.remove('fb');
+  if(!document.querySelector('dialog.fb[open]'))document.documentElement.classList.remove('fb-open');
+}
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pad=n=>String(n).padStart(2,'0');
 const round2=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
@@ -671,7 +700,7 @@ function twoTap(btn,label,fn){
 
 /* ---------- copy ---------- */
 function copyText(text,ok){
-  const fb=()=>{$('copyText').value=text;if(!$('copyDlg').open)$('copyDlg').showModal();setTimeout(()=>{$('copyText').focus();$('copyText').select()},30)};
+  const fb=()=>{$('copyText').value=text;showDlg($('copyDlg'));setTimeout(()=>{$('copyText').focus();$('copyText').select()},30)};
   try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(()=>toast(ok),fb);return}}catch(e){}
   fb();
 }
@@ -702,7 +731,7 @@ function openExpense(e){
   const d=$('expDelete');d.hidden=!e;d.textContent='Sil';d.dataset.armed='';d.classList.remove('armed');
   $('planNote').hidden=!(e&&nInst(e)>1);$('expErr').textContent='';
   $('titleList').innerHTML=[...new Set(state.expenses.map(x=>x.title).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'tr')).map(t=>`<option value="${esc(t)}"></option>`).join('');
-  buildForm();expDlg.showModal();
+  buildForm();showDlg(expDlg);
   if(!e) setTimeout(()=>$('fAmount').focus(),60);
 }
 function buildForm(){
@@ -747,15 +776,15 @@ $('expForm').addEventListener('submit',async ev=>{
   const id=F.id||uid(),base=F.src||{};
   const data=cleanExpense({...base,title,total:amt,payer:F.payer,shareA:sa,month:F.month,installments:F.inst,firstIndex:F.first,recurring:F.recur,seriesId:base.seriesId||id,createdAt:base.createdAt||Date.now(),createdBy:F.id?base.createdBy:state.me});
   const btn=$('expSave');btn.disabled=true;btn.textContent='Kaydediliyor…';
-  const edit=!!F.id;expDlg.close();
+  const edit=!!F.id;hideDlg(expDlg);
   const ok=await safeWrite(()=>store.set('expenses',id,data));
   btn.disabled=false;btn.textContent='Kaydet';
   if(ok)toast(edit?'Kaydedildi.':`Eklendi: ${title} · ${money(F.inst>1?amt/F.inst:amt)}${F.inst>1?' / ay':''}`);
-  else if(!expDlg.open&&!document.querySelector('dialog[open]')){$('expErr').textContent='Kaydedilemedi; bilgiler duruyor, tekrar dene.';expDlg.showModal()}
+  else if(!isOpen(expDlg)&&!document.querySelector('dialog[open]')){$('expErr').textContent='Kaydedilemedi; bilgiler duruyor, tekrar dene.';showDlg(expDlg)}
 });
 $('expDelete').addEventListener('click',ev=>{
   const btn=ev.currentTarget;
-  twoTap(btn,'Emin misin? Tekrar dokun',async()=>{const id=F.id;expDlg.close();if(await safeWrite(()=>store.del('expenses',id)))toast('Silindi.')});
+  twoTap(btn,'Emin misin? Tekrar dokun',async()=>{const id=F.id;hideDlg(expDlg);if(await safeWrite(()=>store.del('expenses',id)))toast('Silindi.')});
 });
 
 /* ---------- settings, link, shortcut ---------- */
@@ -763,16 +792,16 @@ function openSettings(){
   buildMe();
   const a=$('sheetLink');a.hidden=!state.sheetUrl;if(state.sheetUrl)a.href=state.sheetUrl;
   const lo=$('sLogout');lo.textContent='Bu cihazın bağlantısını kaldır';lo.dataset.armed='';lo.classList.remove('armed');
-  setDlg.showModal();
+  showDlg(setDlg);
 }
 function buildMe(){$('sMe').innerHTML=seg('me',[['a',`${av('a',1)}${esc(nm('a'))}`,'pa'],['b',`${av('b',1)}${esc(nm('b'))}`,'pb']],state.me)}
 setDlg.addEventListener('click',ev=>{const m=ev.target.closest('[data-f="me"]');if(m){state.me=m.dataset.v;ls.set('oh-me',state.me);buildMe();render()}});
-$('setForm').addEventListener('submit',ev=>{ev.preventDefault();setDlg.close()});
+$('setForm').addEventListener('submit',ev=>{ev.preventDefault();hideDlg(setDlg)});
 $('sLogout').addEventListener('click',ev=>twoTap(ev.currentTarget,'Emin misin? Tekrar dokun',()=>{
   ls.set(CONN_KEY,null);ls.set(CACHE_KEY,null);conn=null;
   try{history.replaceState(null,'',location.pathname)}catch(e){}
   Object.assign(state,{mode:'setup',loaded:false,expenses:[],transfers:[],sheetUrl:'',stale:false,authErr:false,settings:normSettings(null)});
-  setDlg.close();$('view').innerHTML='';render();
+  hideDlg(setDlg);$('view').innerHTML='';render();
 }));
 
 let qrLib=null;
@@ -793,11 +822,11 @@ function openLink(){
   box.hidden=false;box.innerHTML='<div class="sk big"></div>';
   loadQr().then(()=>{box.innerHTML=qrSvg(link)}).catch(()=>{box.hidden=true});
   $('linkShare').hidden=!navigator.share;
-  linkDlg.showModal();
+  showDlg(linkDlg);
 }
 $('linkCopy').addEventListener('click',()=>copyText(linkFor(conn),'Link kopyalandı.'));
 $('linkShare').addEventListener('click',()=>{navigator.share({title:'Ortak Hesap',text:'Ortak Hesap bağlantı linki',url:linkFor(conn)}).catch(()=>{})});
-$('linkForm').addEventListener('submit',ev=>{ev.preventDefault();linkDlg.close()});
+$('linkForm').addEventListener('submit',ev=>{ev.preventDefault();hideDlg(linkDlg)});
 
 function shortcutHtml(){
   const me=state.me==='b'?'b':'a',A=esc(nm('a')),B=esc(nm('b')),M=esc(nm(me)),O=esc(nm(other(me))),v=n=>`<code>${n}</code>`;
@@ -837,12 +866,12 @@ function shortcutHtml(){
   <p class="hint">Kayıt yazılmamıştır; mesaj nedenini söyler. En sık neden, URL İçeriğini Al’daki bir alan adının yanlış yazılması ya da değerinin boş kalmasıdır. Düzeltip tekrar çalıştır.</p>
   <p class="hint">Bildirim yerine Kestirmeler’in kendi hata penceresi çıkarsa (internet yok, zaman aşımı) kayıt yazılmış olabilir. Tekrar girmeden önce sitede kontrol et.</p>`;
 }
-function openShortcut(){$('scBody').innerHTML=shortcutHtml();scDlg.showModal()}
+function openShortcut(){$('scBody').innerHTML=shortcutHtml();showDlg(scDlg)}
 scDlg.addEventListener('click',ev=>{const b=ev.target.closest('[data-copy]');if(!b)return;const w=b.dataset.copy;copyText(w==='u'?conn.u:conn.k,w==='u'?'Adres kopyalandı.':'Anahtar kopyalandı.')});
-$('scForm').addEventListener('submit',ev=>{ev.preventDefault();scDlg.close()});
+$('scForm').addEventListener('submit',ev=>{ev.preventDefault();hideDlg(scDlg)});
 
-[expDlg,setDlg,copyDlg,linkDlg,scDlg].forEach(d=>d.addEventListener('click',ev=>{if(ev.target===d||ev.target.closest('[data-close]'))d.close()}));
-$('copyForm').addEventListener('submit',ev=>{ev.preventDefault();copyDlg.close()});
+[expDlg,setDlg,copyDlg,linkDlg,scDlg].forEach(d=>d.addEventListener('click',ev=>{if(ev.target===d||ev.target.closest('[data-close]'))hideDlg(d)}));
+$('copyForm').addEventListener('submit',ev=>{ev.preventDefault();hideDlg(copyDlg)});
 
 /* ---------- page actions ---------- */
 document.addEventListener('click',async ev=>{
@@ -863,8 +892,8 @@ document.addEventListener('click',async ev=>{
     case 'undo-paid':twoTap(b,'Emin misin?',async()=>{if(await safeWrite(()=>store.del('transfers',b.dataset.id)))toast('Geri alındı.')});break;
     case 'copy':copyText(summaryText(),'Özet kopyalandı.');break;
     case 'settings':if(state.mode==='app')openSettings();break;
-    case 'open-shortcut':setDlg.close();openShortcut();break;
-    case 'open-link':setDlg.close();openLink();break;
+    case 'open-shortcut':hideDlg(setDlg);openShortcut();break;
+    case 'open-link':hideDlg(setDlg);openLink();break;
     case 'set-me':state.me=b.dataset.p;ls.set('oh-me',state.me);render();break;
     case 'recur-skip':ls.set('oh-skip-recur-'+state.cur,'1');render();break;
     case 'recur-add':{
