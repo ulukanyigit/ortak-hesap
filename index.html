@@ -56,9 +56,7 @@ html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg);pointer-events:none}
 dialog:not([open]){display:none}
-/* <dialog> desteklemeyen ya da showModal'ı reddeden tarayıcılar için yedek görünüm */
-dialog.fb{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:100;margin:0 auto}
-html.fb-open body::after{content:"";position:fixed;inset:0;z-index:90;background:rgba(15,23,42,.55)}
+html.dlg-open,html.dlg-open body{overflow:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;-webkit-tap-highlight-color:transparent}
 :focus-visible{outline:3px solid var(--primary);outline-offset:2px}
@@ -185,16 +183,17 @@ button.row:active{opacity:.75}
 @keyframes tin{from{transform:translateY(8px);opacity:0}}
 
 /* sheets */
-dialog.sheet{border:none;padding:0;background:var(--card);color:var(--fg);border-radius:var(--r-lg);width:min(520px,calc(100% - 24px));max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px)}
-dialog.sheet[open]{display:flex;flex-direction:column}
-dialog::backdrop{background:rgba(15,23,42,.55)}
-.sheet form{display:flex;flex-direction:column;flex:1;min-height:0}
-.sheet-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 12px 4px 20px}
+/* Pencere = ekranı kaplayan sabit katman + içinde kart. showModal / üst katman kullanılmıyor:
+   iOS 26 Safari'de karartma çıkıp pencerenin kendisi çizilmiyordu. Alt çubukla aynı, sade sabit konumlama. */
+dialog.sheet{position:fixed;top:0;left:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:12px;border:none;z-index:35;background:rgba(15,23,42,.55);color:var(--fg);overflow:hidden;overscroll-behavior:contain}
+dialog.sheet[open]{display:flex;align-items:center;justify-content:center}
+.sheet form{display:flex;flex-direction:column;width:min(520px,100%);max-height:100%;min-height:0;background:var(--card);color:var(--fg);border-radius:var(--r-lg);overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,.28)}
+.sheet-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 12px 4px 20px}
 .sheet-head h2{margin:0;font-family:var(--font-head);font-weight:600;font-size:19px}
-.sheet-body{display:flex;flex-direction:column;gap:18px;overflow:auto;min-height:0;padding:8px 20px 16px}
-.sheet-foot{display:flex;align-items:center;gap:8px;padding:12px 20px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--border)}
+.sheet-body{flex:0 1 auto;display:flex;flex-direction:column;gap:18px;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;min-height:0;padding:8px 20px 16px}
+.sheet-foot{flex:none;display:flex;align-items:center;gap:8px;padding:12px 20px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--border)}
 .sheet-foot .grow{flex:1}
-@media (max-width:600px){dialog.sheet{width:100%;max-width:100%;margin:auto 0 0;border-radius:var(--r-lg) var(--r-lg) 0 0;max-height:94vh;max-height:94dvh}}
+@media (max-width:600px){dialog.sheet{padding:calc(16px + env(safe-area-inset-top,0px)) 0 0}dialog.sheet[open]{align-items:flex-end}.sheet form{width:100%;border-radius:var(--r-lg) var(--r-lg) 0 0}}
 .money-in{display:flex;align-items:center;gap:8px;padding:2px 16px;border:1px solid var(--border);border-radius:var(--r);background:var(--soft)}
 .money-in:focus-within{border-color:var(--primary)}
 .money-in input{flex:1;min-width:0;border:none;background:transparent;padding:8px 0;font-family:var(--font-head);font-weight:700;font-size:34px;outline:none}
@@ -358,19 +357,33 @@ const INST_OPTS=[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36];
 const CONN_KEY='oh-baglanti',CACHE_KEY='oh-onbellek';
 const QR_SRC='https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
 const $=id=>document.getElementById(id);
-/* Pencereler: showModal varsa onu, yoksa ya da hata verirse yedek görünümü kullan. */
-const HAS_DLG=typeof HTMLDialogElement==='function'&&typeof HTMLDialogElement.prototype.showModal==='function';
+/* Pencereler: showModal yerine "open" özniteliği + CSS'teki sabit katman (her tarayıcıda aynı çalışır).
+   Açıkken arkadaki sayfa kaydırılamaz ve dokunulamaz (inert); Esc ve karartmaya dokunmak kapatır. */
 const isOpen=d=>d.hasAttribute('open');
+function syncPage(){
+  const any=!!document.querySelector('dialog.sheet[open]');
+  document.documentElement.classList.toggle('dlg-open',any);
+  document.querySelectorAll('body>header,body>main,body>.bottom').forEach(el=>{el.inert=any});
+}
 function showDlg(d){
   if(isOpen(d)) return;
-  if(HAS_DLG){try{d.showModal();return}catch(e){}}
-  d.setAttribute('open','');d.classList.add('fb');document.documentElement.classList.add('fb-open');
+  d._ret=document.activeElement;
+  d.setAttribute('open','');d.setAttribute('aria-modal','true');
+  syncPage();
+  const c=d.querySelector('[data-close]');if(c)try{c.focus({preventScroll:true})}catch(e){}
 }
 function hideDlg(d){
-  if(HAS_DLG&&isOpen(d)&&!d.classList.contains('fb')){try{d.close()}catch(e){}}
-  d.removeAttribute('open');d.classList.remove('fb');
-  if(!document.querySelector('dialog.fb[open]'))document.documentElement.classList.remove('fb-open');
+  if(!isOpen(d)) return;
+  d.removeAttribute('open');d.removeAttribute('aria-modal');
+  syncPage();
+  const r=d._ret;d._ret=null;
+  if(r&&r.isConnected&&!document.querySelector('dialog.sheet[open]'))try{r.focus({preventScroll:true})}catch(e){}
 }
+document.addEventListener('keydown',ev=>{
+  if(ev.key!=='Escape')return;
+  const top=[...document.querySelectorAll('dialog.sheet[open]')].pop();
+  if(top){ev.preventDefault();hideDlg(top)}
+});
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pad=n=>String(n).padStart(2,'0');
 const round2=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
